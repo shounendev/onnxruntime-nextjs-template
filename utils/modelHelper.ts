@@ -1,73 +1,75 @@
 import * as ort from 'onnxruntime-web';
-import _ from 'lodash';
-import { imagenetClasses } from '../data/imagenet';
 
-export async function runSqueezenetModel(preprocessedData: any): Promise<[any, number]> {
-  
-  // Create session and set options. See the docs here for more options: 
-  //https://onnxruntime.ai/docs/api/js/interfaces/InferenceSession.SessionOptions.html#graphOptimizationLevel
-  const session = await ort.InferenceSession
-                          .create('./_next/static/chunks/pages/squeezenet1_1.onnx', 
-                          { executionProviders: ['webgl'], graphOptimizationLevel: 'all' });
-  console.log('Inference session created')
-  // Run inference and get results.
-  var [results, inferenceTime] =  await runInference(session, preprocessedData);
-  return [results, inferenceTime];
+export type StyleName = 'mosaic' | 'candy' | 'rain-princess' | 'udnie' | 'pointilism';
+
+export const STYLES: { name: StyleName; label: string }[] = [
+  { name: 'mosaic', label: 'Mosaic' },
+  { name: 'candy', label: 'Candy' },
+  { name: 'rain-princess', label: 'Rain Princess' },
+  { name: 'udnie', label: 'Udnie' },
+  { name: 'pointilism', label: 'Pointilism' },
+];
+
+// Cache for loaded sessions to avoid reloading models
+const sessionCache: Map<StyleName, ort.InferenceSession> = new Map();
+
+async function getSession(styleName: StyleName): Promise<ort.InferenceSession> {
+  // Check cache first
+  if (sessionCache.has(styleName)) {
+    return sessionCache.get(styleName)!;
+  }
+
+  // Load the model
+  const modelPath = `./_next/static/chunks/pages/${styleName}-9.onnx`;
+  console.log(`Loading model: ${modelPath}`);
+
+  const session = await ort.InferenceSession.create(modelPath, {
+    executionProviders: ['wasm'],
+    graphOptimizationLevel: 'all',
+  });
+
+  console.log('Inference session created for style:', styleName);
+  sessionCache.set(styleName, session);
+  return session;
 }
 
-async function runInference(session: ort.InferenceSession, preprocessedData: any): Promise<[any, number]> {
+export async function runStyleTransfer(
+  preprocessedData: ort.Tensor,
+  styleName: StyleName
+): Promise<[ort.Tensor, number]> {
+  const session = await getSession(styleName);
+  const [output, inferenceTime] = await runInference(session, preprocessedData);
+  return [output, inferenceTime];
+}
+
+async function runInference(
+  session: ort.InferenceSession,
+  preprocessedData: ort.Tensor
+): Promise<[ort.Tensor, number]> {
   // Get start time to calculate inference time.
   const start = new Date();
-  // create feeds with the input name from model export and the preprocessed data.
+
+  // Create feeds with the input name from model export and the preprocessed data.
   const feeds: Record<string, ort.Tensor> = {};
   feeds[session.inputNames[0]] = preprocessedData;
-  
+
   // Run the session inference.
   const outputData = await session.run(feeds);
+
   // Get the end time to calculate inference time.
   const end = new Date();
+
   // Convert to seconds.
-  const inferenceTime = (end.getTime() - start.getTime())/1000;
+  const inferenceTime = (end.getTime() - start.getTime()) / 1000;
+
   // Get output results with the output name from the model export.
   const output = outputData[session.outputNames[0]];
-  //Get the softmax of the output data. The softmax transforms values to be between 0 and 1
-  var outputSoftmax = softmax(Array.prototype.slice.call(output.data));
-  
-  //Get the top 5 results.
-  var results = imagenetClassesTopK(outputSoftmax, 5);
-  console.log('results: ', results);
-  return [results, inferenceTime];
+
+  console.log('Style transfer completed in', inferenceTime, 'seconds');
+  return [output, inferenceTime];
 }
 
-//The softmax transforms values to be between 0 and 1
-function softmax(resultArray: number[]): any {
-  // Get the largest value in the array.
-  const largestNumber = Math.max(...resultArray);
-  // Apply exponential function to each result item subtracted by the largest number, use reduce to get the previous result number and the current number to sum all the exponentials results.
-  const sumOfExp = resultArray.map((resultItem) => Math.exp(resultItem - largestNumber)).reduce((prevNumber, currentNumber) => prevNumber + currentNumber);
-  //Normalizes the resultArray by dividing by the sum of all exponentials; this normalization ensures that the sum of the components of the output vector is 1.
-  return resultArray.map((resultValue, index) => {
-    return Math.exp(resultValue - largestNumber) / sumOfExp;
-  });
+// Clear the session cache (useful for memory management)
+export function clearSessionCache(): void {
+  sessionCache.clear();
 }
-/**
- * Find top k imagenet classes
- */
-export function imagenetClassesTopK(classProbabilities: any, k = 5) {
-  const probs =
-      _.isTypedArray(classProbabilities) ? Array.prototype.slice.call(classProbabilities) : classProbabilities;
-
-  const sorted = _.reverse(_.sortBy(probs.map((prob: any, index: number) => [prob, index]), (probIndex: Array<number> ) => probIndex[0]));
-
-  const topK = _.take(sorted, k).map((probIndex: Array<number>) => {
-    const iClass = imagenetClasses[probIndex[1]];
-    return {
-      id: iClass[0],
-      index: parseInt(probIndex[1].toString(), 10),
-      name: iClass[1].replace(/_/g, ' '),
-      probability: probIndex[0]
-    };
-  });
-  return topK;
-}
-

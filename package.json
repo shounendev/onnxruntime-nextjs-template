@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --port 3005",
     "build": "next build && next export",
-    "start": "next start",
+    "start": "next start --port 3001",
     "lint": "next lint"
   },
   "dependencies": {
@@ -15,7 +15,7 @@
     "ndarray": "^1.0.19",
     "ndarray-ops": "^1.2.2",
     "next": "^11.1.2",
-    "onnxruntime-web": "^1.9.0",
+    "onnxruntime-web": "1.10.0",
     "react": "17.0.2",
     "react-dom": "17.0.2"
   },
